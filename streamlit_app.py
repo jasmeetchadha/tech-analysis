@@ -120,7 +120,40 @@ def generate_stock_analysis(asset, start_date, end_date):
     return {"chart_figure": fig, "signals_data": all_signals_df}
 
 
+
+def drawdown_analysis(asset, start_date, end_date):
+    """Generates and displays a drawdown chart for the given asset."""
+
+    try:
+        data = yf.download(asset, start=start_date, end=end_date)
+
+        if data.empty:
+            print(f"No data found for {asset} between {start_date} and {end_date}.")
+            return None  # Return None to indicate no chart
+
+        # Calculate drawdown
+        mu_prices = data['Adj Close']
+        peak = mu_prices.cummax()
+        drawdown = (mu_prices - peak) / peak
+
+        # Plot the drawdown
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(drawdown)
+        ax.set_title(f'{asset} Drawdown from Previous High')
+        ax.set_xlabel('Date')
+        ax.set_ylabel('Drawdown')
+
+        return fig  # Return the figure
+
+    except Exception as e:
+        print(f"Error processing {asset} in drawdown analysis: {e}")
+        return None  # Return None to indicate no chart
+
+
+
 st.title("Stock Analysis App")
+
+
 
 # Input fields for ticker, start date, and end date
 asset = st.text_input("Enter Asset Ticker (e.g., AAPL):", "AAPL")
@@ -132,10 +165,22 @@ end_date = st.date_input("End Date:")
 if st.button("Generate Analysis"):
     # Call your function to perform the analysis
     result = generate_stock_analysis(asset, start_date, end_date)
+    drawdown_fig = drawdown_analysis(asset, start_date, end_date) # Call the new function
+
 
     # Display the chart
-    st.pyplot(result["chart_figure"])
+    if result["chart_figure"] is not None:
+        st.pyplot(result["chart_figure"])
 
+    # Display the drawdown chart
+    if drawdown_fig is not None:
+        st.pyplot(drawdown_fig)  # Display using st.pyplot
+    
+    
     # Display the signals data
-    st.write("Signals:")
-    st.dataframe(result["signals_data"])
+    if result["signals_data"] is not None:
+        st.write("Signals:")
+        st.dataframe(result["signals_data"])
+
+
+
