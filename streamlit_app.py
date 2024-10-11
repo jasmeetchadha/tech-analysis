@@ -151,7 +151,7 @@ def drawdown_analysis(asset, start_date, end_date):
 
 
 
-st.title("Stock Analysis App")
+st.title("Technical Analysis")
 
 
 
