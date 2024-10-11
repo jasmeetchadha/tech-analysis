@@ -9,6 +9,7 @@ import plotly.express as px
 import warnings
 import riskfolio as rp
 import matplotlib.dates as mdates
+import datetime
 
 
 warnings.filterwarnings("ignore")
@@ -123,7 +124,8 @@ st.title("Stock Analysis App")
 
 # Input fields for ticker, start date, and end date
 asset = st.text_input("Enter Asset Ticker (e.g., AAPL):", "AAPL")
-start_date = st.date_input("Start Date:")
+default_start_date = datetime.date.today() - datetime.timedelta(days=1095) 
+start_date = st.date_input("Start Date:", value=default_start_date)
 end_date = st.date_input("End Date:")
 
 # Button to trigger analysis
