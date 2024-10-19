@@ -46,11 +46,23 @@ def generate_stock_analysis(asset, start_date, end_date):
             return {"chart_figure": None, "signals_data": None}
         data['VolumeRatio'] = data['Volume'].rolling(window=30).sum() / outstanding_shares
         data['RSI'] = 100 - (100 / (1 + (data['Close'].diff(1).apply(lambda x: max(x, 0)).rolling(window=14).sum() / data['Close'].diff(1).apply(lambda x: abs(min(x, 0))).rolling(window=14).sum())))
-        data['SMA200'] = data['Close'].rolling(window=200).mean()
+        data['SMA200'] = data['Close'].rolling(window=200).mean()        
         data['Signal'] = ((data['Close'] < data['ValueWeightedPrice']) & (data['VolumeRatio'] > 0.5) & (data['RSI'] < 40)).astype(int)
         data['PriceLower'] = data['Close'] < data['Close'].shift(14)
         data['RSIHiger'] = data['RSI'] > data['RSI'].shift(14)
         data['PositiveRSIDivergence'] = data['PriceLower'] & data['RSIHiger']
+        
+        # Add columns for price higher highs and RSI lower lows
+        data['PriceHigher'] = data['Close'] > data['Close'].shift(14)
+        data['RSILower'] = data['RSI'] < data['RSI'].shift(14)
+        # Calculate Negative RSI Divergence
+        data['NegativeRSIDivergence'] = data['PriceHigher'] & ~data['RSIHiger']
+
+        # Calculate drawdown
+        mu_prices = data['Adj Close']
+        peak = mu_prices.cummax()
+        drawdown = (mu_prices - peak) / peak
+
 
         # Plotting
         fig, (ax1, ax3) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
@@ -78,10 +90,16 @@ def generate_stock_analysis(asset, start_date, end_date):
         ax3.axhline(y=30, color='gray', linestyle='--')  # Add horizontal line at RSI 30
         ax3.axhline(y=70, color='gray', linestyle='--')  # Add horizontal line at RSI 70
 
+
         # Shade yellow for Positive RSI Divergence
         for i in range(len(data)):
             if data['PositiveRSIDivergence'][i]:
                 ax3.axvspan(data.index[i], data.index[i], color='yellow', alpha=0.5)
+
+        # Shade orange for Negative RSI Divergence
+        for i in range(len(data)):
+            if data['NegativeRSIDivergence'][i]:
+                ax3.axvspan(data.index[i], data.index[i], color='orange', alpha=0.5)
 
         # Shade Green for Positive Signals
         for i in range(len(data)):
