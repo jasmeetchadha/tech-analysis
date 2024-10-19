@@ -26,7 +26,8 @@ def generate_stock_analysis(asset, start_date, end_date):
     Returns:
         A dictionary containing chart figures and signals data.
     """
-    all_signals_df = pd.DataFrame(columns=['Symbol', 'Signal Type', 'Date'])
+    all_signals_df = pd.DataFrame(columns=['Symbol', 'Signal Type', 'Date', 'Price'])
+
 
     try:
         # Download historical data
@@ -101,17 +102,40 @@ def generate_stock_analysis(asset, start_date, end_date):
 
         plt.tight_layout()
 
-        # Get last 10 RSI Divergence signals
+        # Get last 5 RSI Divergence signals
         rsi_divergence_signals = data[data['PositiveRSIDivergence'] == True].tail(10).index.tolist()
 
-        # Get last 10 Positive signals
+        # Get last 5 Positive signals
         positive_signals = data[data['Signal'] == 1].tail(10).index.tolist()
 
-         # Add signals to DataFrame
+        # Add signals to DataFrame, including the price at the signal date
         for signal_date in rsi_divergence_signals:
-            all_signals_df = pd.concat([all_signals_df, pd.DataFrame({'Symbol': [asset], 'Signal Type': ['RSI Divergence'], 'Date': [signal_date]})], ignore_index=True)
+            signal_price = data.loc[signal_date, 'Close']
+            all_signals_df = pd.concat([all_signals_df, pd.DataFrame({'Date': [signal_date], 'Ticker': [asset], 'Price': [signal_price], 'RSI Divergence': [1], 'Positive Signal': [0]})], ignore_index=True)
         for signal_date in positive_signals:
-            all_signals_df = pd.concat([all_signals_df, pd.DataFrame({'Symbol': [asset], 'Signal Type': ['Positive Signal'], 'Date': [signal_date]})], ignore_index=True)
+            signal_price = data.loc[signal_date, 'Close']
+            all_signals_df = pd.concat([all_signals_df, pd.DataFrame({'Date': [signal_date], 'Ticker': [asset], 'Price': [signal_price], 'RSI Divergence': [0], 'Positive Signal': [1]})], ignore_index=True)
+
+        # Group by 'Date' and combine signals into a single row
+        all_signals_df = all_signals_df.groupby('Date').agg({'Ticker': 'first', 'Price': 'first', 'RSI Divergence': 'sum', 'Positive Signal': 'sum'}).reset_index()
+
+        # Sort the DataFrame by 'Date' in descending order (latest first)
+        all_signals_df = all_signals_df.sort_values('Date', ascending=False)
+
+        # Highlight rows where both signals are on
+        def highlight_both_signals(row):
+            if row['RSI Divergence'] == 1 and row['Positive Signal'] == 1:
+                return ['background-color: green'] * len(row)
+            return [''] * len(row)
+
+        all_signals_df = all_signals_df.style.apply(highlight_both_signals, axis=1)
+
+        # Convert the 'Date' column to the desired format
+        all_signals_df['Date'] = pd.to_datetime(all_signals_df['Date']).dt.strftime('%Y-%M-%D')
+
+
+        
+
 
 
     except Exception as e:
