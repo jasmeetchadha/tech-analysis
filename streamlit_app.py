@@ -44,8 +44,11 @@ def generate_stock_analysis(asset, start_date, end_date):
         if outstanding_shares is None or outstanding_shares == 0:
             print(f"Could not find outstanding shares for {asset}. Skipping...")
             return {"chart_figure": None, "signals_data": None}
+        
+        rsi_rolling_window = 14
+        
         data['VolumeRatio'] = data['Volume'].rolling(window=30).sum() / outstanding_shares
-        data['RSI'] = 100 - (100 / (1 + (data['Close'].diff(1).apply(lambda x: max(x, 0)).rolling(window=14).sum() / data['Close'].diff(1).apply(lambda x: abs(min(x, 0))).rolling(window=14).sum())))
+        data['RSI'] = 100 - (100 / (1 + (data['Close'].diff(1).apply(lambda x: max(x, 0)).rolling(window=rsi_rolling_window).sum() / data['Close'].diff(1).apply(lambda x: abs(min(x, 0))).rolling(window=rsi_rolling_window).sum())))
         data['SMA200'] = data['Close'].rolling(window=200).mean()        
         data['Signal'] = ((data['Close'] < data['ValueWeightedPrice']) & (data['VolumeRatio'] > 0.5) & (data['RSI'] < 40)).astype(int)
         data['PriceLower'] = data['Close'] < data['Close'].shift(14)
@@ -62,6 +65,9 @@ def generate_stock_analysis(asset, start_date, end_date):
         mu_prices = data['Adj Close']
         peak = mu_prices.cummax()
         drawdown = (mu_prices - peak) / peak
+
+
+
 
 
         # Plotting
