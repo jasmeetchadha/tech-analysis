@@ -51,15 +51,39 @@ def generate_stock_analysis(asset, start_date, end_date):
         data['RSI'] = 100 - (100 / (1 + (data['Close'].diff(1).apply(lambda x: max(x, 0)).rolling(window=rsi_rolling_window).sum() / data['Close'].diff(1).apply(lambda x: abs(min(x, 0))).rolling(window=rsi_rolling_window).sum())))
         data['SMA200'] = data['Close'].rolling(window=200).mean()        
         data['Signal'] = ((data['Close'] < data['ValueWeightedPrice']) & (data['VolumeRatio'] > 0.5) & (data['RSI'] < 40)).astype(int)
-        data['PriceLower'] = data['Close'] < data['Close'].shift(14)
-        data['RSIHiger'] = data['RSI'] > data['RSI'].shift(14)
-        data['PositiveRSIDivergence'] = data['PriceLower'] & data['RSIHiger']
         
-        # Add columns for price higher highs and RSI lower lows
-        data['PriceHigher'] = data['Close'] > data['Close'].shift(14)
-        data['RSILower'] = data['RSI'] < data['RSI'].shift(14)
-        # Calculate Negative RSI Divergence
-        data['NegativeRSIDivergence'] = data['PriceHigher'] & ~data['RSIHiger']
+        # 1. Adjust the lookback period (14 in your code) for price and RSI comparisons:
+        lookback_period = 14  # Experiment with different values
+
+        data['PriceLower'] = data['Close'] < data['Close'].shift(lookback_period)
+        data['RSIHiger'] = data['RSI'] > data['RSI'].shift(lookback_period)
+        data['PositiveRSIDivergence'] = data['PriceLower'] & data['RSIHiger']
+
+        data['PriceHigher'] = data['Close'] > data['Close'].shift(lookback_period)
+        data['RSILower'] = data['RSI'] < data['RSI'].shift(lookback_period)
+        data['NegativeRSIDivergence'] = data['PriceHigher'] & data['RSILower']  # Corrected condition
+
+        # 2. Add a threshold for price and RSI differences:
+        price_threshold = 0.05  # 5% price difference
+        rsi_threshold = 5  # 5 points RSI difference
+
+        data['PositiveRSIDivergence'] = data['PositiveRSIDivergence'] & \
+                                        ((data['Close'].shift(lookback_period) - data['Close']) / data['Close'].shift(lookback_period) > price_threshold) & \
+                                        (data['RSI'] - data['RSI'].shift(lookback_period) > rsi_threshold)
+
+        data['NegativeRSIDivergence'] = data['NegativeRSIDivergence'] & \
+                                        ((data['Close'] - data['Close'].shift(lookback_period)) / data['Close'].shift(lookback_period) > price_threshold) & \
+                                        (data['RSI'].shift(lookback_period) - data['RSI'] > rsi_threshold)
+
+        # 3. Filter divergences based on trend:
+        # (Example: Only consider positive divergences during a downtrend)
+        data['Downtrend'] = data['SMA200'] < data['SMA200'].shift(20)  # Example downtrend condition
+        data['PositiveRSIDivergence'] = data['PositiveRSIDivergence'] & data['Downtrend'] 
+        # Add the opposite condition for NegativeRSIDivergence (Uptrend):
+        data['Uptrend'] = data['SMA200'] > data['SMA200'].shift(20)  # Example uptrend condition
+        data['NegativeRSIDivergence'] = data['NegativeRSIDivergence'] & data['Uptrend']
+
+
 
         # Calculate drawdown
         mu_prices = data['Adj Close']
