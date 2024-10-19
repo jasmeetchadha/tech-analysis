@@ -64,7 +64,7 @@ def generate_stock_analysis(asset, start_date, end_date):
         data['NegativeRSIDivergence'] = data['PriceHigher'] & data['RSILower']  # Corrected condition
 
         # 2. Add a threshold for price and RSI differences:
-        price_threshold = 0.05  # 5% price difference
+        price_threshold = 0.04  # 5% price difference
         rsi_threshold = 5  # 5 points RSI difference
 
         data['PositiveRSIDivergence'] = data['PositiveRSIDivergence'] & \
