@@ -253,4 +253,3 @@ if st.button("Generate Analysis"):
     if result["signals_data"] is not None:
         st.write("Signals:")
         st.dataframe(result["signals_data"])
-        
