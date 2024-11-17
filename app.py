@@ -11,116 +11,7 @@ import riskfolio as rp
 import matplotlib.dates as mdates
 import datetime
 
-
 warnings.filterwarnings("ignore")
-
-def generate_stock_analysis(asset, start_date, end_date):
-    """
-    Generates stock analysis charts and signals.
-
-    Args:
-        asset: Stock ticker symbol (e.g., 'AAPL').
-        start_date: Start date for data retrieval (e.g., '2023-01-01').
-        end_date: End date for data retrieval (e.g., '2023-12-31').
-
-    Returns:
-        A dictionary containing chart figures and signals data.
-    """
-    all_signals_df = pd.DataFrame(columns=['Date', 'Ticker', 'Price', 'RSI Divergence', 'Positive Signal'])
-    fig = None  # Initialize fig to None
-
-    try:
-        # Download historical data
-        data = yf.download(asset, start=start_date, end=end_date)
-
-        # Check if the DataFrame is empty
-        if data.empty:
-            print(f"No data found for {asset} between {start_date} and {end_date}.")
-            return {"chart_figure": None, "signals_data": pd.DataFrame(columns=['Date', 'Ticker', 'Price', 'RSI Divergence', 'Positive Signal'])}
-
-        # Calculations
-        data['ValueWeightedPrice'] = (data['Close'] * data['Volume']).rolling(window=30).sum() / data['Volume'].rolling(window=30).sum()
-        outstanding_shares = yf.Ticker(asset).info.get('sharesOutstanding')
-        if outstanding_shares is None or outstanding_shares == 0:
-            print(f"Could not find outstanding shares for {asset}. Skipping...")
-            return {"chart_figure": None, "signals_data": None}
-
-        rsi_rolling_window = 14
-        data['VolumeRatio'] = data['Volume'].rolling(window=30).sum() / outstanding_shares
-        data['RSI'] = 100 - (100 / (1 + (data['Close'].diff(1).apply(lambda x: max(x, 0)).rolling(window=rsi_rolling_window).sum() /
-                                     data['Close'].diff(1).apply(lambda x: abs(min(x, 0))).rolling(window=rsi_rolling_window).sum())))
-        data['SMA200'] = data['Close'].rolling(window=200).mean()
-        data['Signal'] = ((data['Close'] < data['ValueWeightedPrice']) & (data['VolumeRatio'] > 0.5) & (data['RSI'] < 40)).astype(int)
-
-        # Price and RSI Divergences
-        lookback_period = 14
-        price_threshold = 0.04
-        rsi_threshold = 5
-
-        data['PriceLower'] = data['Close'] < data['Close'].shift(lookback_period)
-        data['RSIHigher'] = data['RSI'] > data['RSI'].shift(lookback_period)
-        data['PositiveRSIDivergence'] = data['PriceLower'] & data['RSIHigher'] & \
-                                        ((data['Close'].shift(lookback_period) - data['Close']) / data['Close'].shift(lookback_period) > price_threshold) & \
-                                        (data['RSI'] - data['RSI'].shift(lookback_period) > rsi_threshold)
-
-        data['PriceHigher'] = data['Close'] > data['Close'].shift(lookback_period)
-        data['RSILower'] = data['RSI'] < data['RSI'].shift(lookback_period)
-        data['NegativeRSIDivergence'] = data['PriceHigher'] & data['RSILower'] & \
-                                        ((data['Close'] - data['Close'].shift(lookback_period)) / data['Close'].shift(lookback_period) > price_threshold) & \
-                                        (data['RSI'].shift(lookback_period) - data['RSI'] > rsi_threshold)
-
-        # Trend Filters
-        data['Downtrend'] = data['SMA200'] < data['SMA200'].shift(20)
-        data['PositiveRSIDivergence'] &= data['Downtrend']
-        data['Uptrend'] = data['SMA200'] > data['SMA200'].shift(20)
-        data['NegativeRSIDivergence'] &= data['Uptrend']
-
-        # Plotting
-        fig, (ax1, ax3) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-
-        ax1.plot(data.index, data['Close'], label='Close Price', color='blue')
-        ax1.plot(data.index, data['SMA200'], label='SMA200', color='lightblue')
-        ax1.plot(data.index, data['ValueWeightedPrice'], label='Value Weighted Price', color='red')
-        ax1.set_ylabel('Price')
-
-        ax2 = ax1.twinx()
-        ax2.plot(data.index, data['VolumeRatio'], label='Volume Ratio', color='gray')
-        ax2.set_ylim(0, 1)
-
-        ax3.plot(data.index, data['RSI'], label='RSI', color='purple')
-        ax3.axhline(30, color='gray', linestyle='--')
-        ax3.axhline(70, color='gray', linestyle='--')
-
-        for i in range(len(data)):
-            if data['PositiveRSIDivergence'].iloc[i]:
-                ax3.axvspan(data.index[i], data.index[i], color='yellow', alpha=0.5)
-            if data['NegativeRSIDivergence'].iloc[i]:
-                ax3.axvspan(data.index[i], data.index[i], color='orange', alpha=0.5)
-            if data['Signal'].iloc[i] == 1:
-                ax1.axvspan(data.index[i], data.index[i], color='green', alpha=0.1)
-
-        plt.title(f"{asset} Stock Analysis")
-        plt.tight_layout()
-        plt.close(fig)  # Close to avoid unwanted display
-
-        # Prepare signals DataFrame
-        signal_dates = data[data['Signal'] == 1].index
-        for signal_date in signal_dates:
-            all_signals_df = pd.concat([all_signals_df, pd.DataFrame({
-                'Date': [signal_date],
-                'Ticker': [asset],
-                'Price': [data.loc[signal_date, 'Close']],
-                'RSI Divergence': [int(data.loc[signal_date, 'PositiveRSIDivergence'])],
-                'Positive Signal': [1]
-            })], ignore_index=True)
-
-    except Exception as e:
-        print(f"Error: {e}")
-        fig = plt.figure()
-        plt.text(0.5, 0.5, f"Error: {e}", ha='center')
-
-    return {"chart_figure": fig, "signals_data": all_signals_df}
-
 
 # def generate_stock_analysis(asset, start_date, end_date):
 #     """
@@ -319,6 +210,180 @@ def generate_stock_analysis(asset, start_date, end_date):
 
 
 #     return {"chart_figure": fig, "signals_data": all_signals_df}
+
+def generate_stock_analysis(asset, start_date, end_date):
+    """
+    Generates stock analysis charts and signals.
+
+    Args:
+        asset: Stock ticker symbol (e.g., 'AAPL').
+        start_date: Start date for data retrieval (e.g., '2023-01-01').
+        end_date: End date for data retrieval (e.g., '2023-12-31').
+
+    Returns:
+        A dictionary containing chart figures and signals data.
+    """
+    all_signals_df = pd.DataFrame()
+    fig = None
+
+    try:
+        # Download historical data
+        data = yf.download(asset, start=start_date, end=end_date)
+
+        # Check if the DataFrame is empty
+        if data.empty:
+            print(f"No data found for {asset} between {start_date} and {end_date}.")
+            return {"chart_figure": None, "signals_data": None}
+
+        # Get outstanding shares
+        ticker = yf.Ticker(asset)
+        outstanding_shares = ticker.info.get('sharesOutstanding')
+        if outstanding_shares is None or outstanding_shares == 0:
+            print(f"Could not find outstanding shares for {asset}. Skipping...")
+            return {"chart_figure": None, "signals_data": None}
+
+        # Basic calculations
+        rsi_rolling_window = 14
+        data['ValueWeightedPrice'] = (data['Close'] * data['Volume']).rolling(window=30).sum() / data['Volume'].rolling(window=30).sum()
+        data['VolumeRatio'] = data['Volume'].rolling(window=30).sum() / outstanding_shares
+        
+        # RSI calculation
+        delta = data['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=rsi_rolling_window).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=rsi_rolling_window).mean()
+        rs = gain / loss
+        data['RSI'] = 100 - (100 / (1 + rs))
+        
+        data['SMA200'] = data['Close'].rolling(window=200).mean()
+
+        # Signal calculations using proper boolean operations
+        close_below_vwp = data['Close'] < data['ValueWeightedPrice']
+        volume_ratio_high = data['VolumeRatio'] > 0.5
+        rsi_low = data['RSI'] < 40
+        data['Signal'] = (close_below_vwp & volume_ratio_high & rsi_low).astype(int)
+
+        # RSI Divergence calculations
+        lookback_period = 14
+        price_threshold = 0.04
+        rsi_threshold = 5
+
+        # Calculate price and RSI conditions separately
+        price_lower = data['Close'] < data['Close'].shift(lookback_period)
+        rsi_higher = data['RSI'] > data['RSI'].shift(lookback_period)
+        price_diff_positive = ((data['Close'].shift(lookback_period) - data['Close']) / 
+                             data['Close'].shift(lookback_period)) > price_threshold
+        rsi_diff_positive = (data['RSI'] - data['RSI'].shift(lookback_period)) > rsi_threshold
+
+        price_higher = data['Close'] > data['Close'].shift(lookback_period)
+        rsi_lower = data['RSI'] < data['RSI'].shift(lookback_period)
+        price_diff_negative = ((data['Close'] - data['Close'].shift(lookback_period)) / 
+                             data['Close'].shift(lookback_period)) > price_threshold
+        rsi_diff_negative = (data['RSI'].shift(lookback_period) - data['RSI']) > rsi_threshold
+
+        # Trend conditions
+        data['Downtrend'] = data['SMA200'] < data['SMA200'].shift(20)
+        data['Uptrend'] = data['SMA200'] > data['SMA200'].shift(20)
+
+        # Combine conditions for divergences
+        data['PositiveRSIDivergence'] = (price_lower & rsi_higher & 
+                                        price_diff_positive & rsi_diff_positive & 
+                                        data['Downtrend']).astype(int)
+        
+        data['NegativeRSIDivergence'] = (price_higher & rsi_lower & 
+                                        price_diff_negative & rsi_diff_negative & 
+                                        data['Uptrend']).astype(int)
+
+        # Plotting
+        fig, (ax1, ax3) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, 
+                                      gridspec_kw={'height_ratios': [3, 1]})
+
+        # Main price chart
+        ax1.plot(data.index, data['Close'], label='Close Price', color='blue')
+        ax1.plot(data.index, data['SMA200'], label='SMA200', color='lightblue')
+        ax1.plot(data.index, data['ValueWeightedPrice'], label='Value Weighted Price', color='red')
+        ax1.set_ylabel('Price', color='blue')
+        ax1.tick_params('y', labelcolor='blue')
+
+        # Volume ratio on secondary axis
+        ax2 = ax1.twinx()
+        ax2.plot(data.index, data['VolumeRatio'], label='Volume Ratio', color='gray')
+        ax2.set_ylabel('Volume Ratio', color='gray')
+        ax2.tick_params('y', labelcolor='gray')
+        ax2.set_ylim([0, 1])
+
+        # RSI chart
+        ax3.plot(data.index, data['RSI'], label='RSI', color='purple')
+        ax3.set_ylabel('RSI', color='purple')
+        ax3.tick_params('y', labelcolor='purple')
+        ax3.axhline(y=30, color='gray', linestyle='--')
+        ax3.axhline(y=70, color='gray', linestyle='--')
+
+        # Add signals to chart
+        signal_dates = data[data['Signal'] == 1].index
+        pos_divergence_dates = data[data['PositiveRSIDivergence'] == 1].index
+        neg_divergence_dates = data[data['NegativeRSIDivergence'] == 1].index
+
+        for date in signal_dates:
+            ax1.axvspan(date, date, color='green', alpha=0.1)
+        for date in pos_divergence_dates:
+            ax3.axvspan(date, date, color='yellow', alpha=0.5)
+        for date in neg_divergence_dates:
+            ax3.axvspan(date, date, color='orange', alpha=0.5)
+
+        # Chart formatting
+        ax1.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        fig.autofmt_xdate()
+        plt.title(f'{asset} Chart')
+
+        # Combine legends
+        lines, labels = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        lines3, labels3 = ax3.get_legend_handles_labels()
+        fig.legend(lines + lines2 + lines3, labels + labels2 + labels3, 
+                  loc='upper left', bbox_to_anchor=(0.1, 0.9), ncol=1)
+
+        plt.tight_layout()
+
+        # Create signals DataFrame
+        signals = []
+        for date in pos_divergence_dates[-10:]:  # Last 10 positive divergences
+            signals.append({
+                'Date': date,
+                'Ticker': asset,
+                'Price': data.loc[date, 'Close'],
+                'RSI Divergence': 1,
+                'Positive Signal': 0
+            })
+        
+        for date in signal_dates[-10:]:  # Last 10 positive signals
+            signals.append({
+                'Date': date,
+                'Ticker': asset,
+                'Price': data.loc[date, 'Close'],
+                'RSI Divergence': 0,
+                'Positive Signal': 1
+            })
+
+        if signals:
+            all_signals_df = pd.DataFrame(signals)
+            all_signals_df = all_signals_df.sort_values('Date', ascending=False)
+            
+            # Style the DataFrame
+            def highlight_both_signals(row):
+                if row['RSI Divergence'] == 1 and row['Positive Signal'] == 1:
+                    return ['background-color: green'] * len(row)
+                return [''] * len(row)
+            
+            all_signals_df = all_signals_df.style.apply(highlight_both_signals, axis=1)
+
+    except Exception as e:
+        print(f"Error processing {asset}: {e}")
+        fig = plt.figure()
+        plt.text(0.5, 0.5, f"Error: {e}", fontsize=12, ha='center')
+        all_signals_df = pd.DataFrame()
+
+    return {"chart_figure": fig, "signals_data": all_signals_df}
 
 
 
