@@ -27,6 +27,8 @@ def generate_stock_analysis(asset, start_date, end_date):
         A dictionary containing chart figures and signals data.
     """
     all_signals_df = pd.DataFrame(columns=['Symbol', 'Signal Type', 'Date', 'Price'])
+    fig = None  # Initialize fig to None
+
 
 
     try:
@@ -150,6 +152,8 @@ def generate_stock_analysis(asset, start_date, end_date):
         fig.legend(lines + lines2 + lines3, labels + labels2 + labels3, loc=(0.1, 0.8), ncol=1, fancybox=True, shadow=True)
 
         plt.tight_layout()
+        plt.close(fig)  # Ensure the figure is closed
+
 
         # Get last 5 RSI Divergence signals
         rsi_divergence_signals = data[data['PositiveRSIDivergence'] == True].tail(10).index.tolist()
