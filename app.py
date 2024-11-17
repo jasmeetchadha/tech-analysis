@@ -182,8 +182,8 @@ def generate_stock_analysis(asset, start_date, end_date):
         # Convert the 'Date' column to the desired format
         all_signals_df['Date'] = pd.to_datetime(all_signals_df['Date']).dt.strftime('%Y-%M-%D')
 
-        plt.tight_layout() # just added 
-        plt.close(fig) # just added 
+        # plt.tight_layout() # just added 
+        # plt.close(fig) # just added 
 
         
 
