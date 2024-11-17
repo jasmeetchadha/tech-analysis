@@ -124,20 +124,31 @@ def generate_stock_analysis(asset, start_date, end_date):
         ax3.axhline(y=70, color='gray', linestyle='--')  # Add horizontal line at RSI 70
 
 
-        # Shade yellow for Positive RSI Divergence
+        # Fix for ambiguous Series truthiness
         for i in range(len(data)):
-            if data['PositiveRSIDivergence'][i]:
+            if data['PositiveRSIDivergence'].iloc[i]:  # Use `.iloc[i]` for scalar access
                 ax3.axvspan(data.index[i], data.index[i], color='yellow', alpha=0.5)
 
-        # Shade orange for Negative RSI Divergence
-        for i in range(len(data)):
-            if data['NegativeRSIDivergence'][i]:
+            if data['NegativeRSIDivergence'].iloc[i]:  # Use `.iloc[i]` for scalar access
                 ax3.axvspan(data.index[i], data.index[i], color='orange', alpha=0.5)
 
-        # Shade Green for Positive Signals
-        for i in range(len(data)):
-            if data['Signal'][i] == 1:
+            if data['Signal'].iloc[i] == 1:  # Ensure scalar comparison
                 ax1.axvspan(data.index[i], data.index[i], color='green', alpha=0.1)
+
+        # # Shade yellow for Positive RSI Divergence
+        # for i in range(len(data)):
+        #     if data['PositiveRSIDivergence'][i]:
+        #         ax3.axvspan(data.index[i], data.index[i], color='yellow', alpha=0.5)
+
+        # # Shade orange for Negative RSI Divergence
+        # for i in range(len(data)):
+        #     if data['NegativeRSIDivergence'][i]:
+        #         ax3.axvspan(data.index[i], data.index[i], color='orange', alpha=0.5)
+
+        # # Shade Green for Positive Signals
+        # for i in range(len(data)):
+        #     if data['Signal'][i] == 1:
+        #         ax1.axvspan(data.index[i], data.index[i], color='green', alpha=0.1)
 
         # Formatting
         ax1.xaxis.set_major_locator(mdates.AutoDateLocator())
