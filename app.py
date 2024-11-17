@@ -152,7 +152,7 @@ def generate_stock_analysis(asset, start_date, end_date):
         fig.legend(lines + lines2 + lines3, labels + labels2 + labels3, loc=(0.1, 0.8), ncol=1, fancybox=True, shadow=True)
 
         plt.tight_layout()
-        plt.close(fig)  # Ensure the figure is closed
+        #plt.close(fig)  # Ensure the figure is closed
 
 
         # Get last 5 RSI Divergence signals
@@ -195,6 +195,10 @@ def generate_stock_analysis(asset, start_date, end_date):
 
     except Exception as e:
         print(f"Error processing {asset}: {e}")
+        fig = plt.figure()  # Create an empty figure as a fallback
+        plt.text(0.5, 0.5, f"Error: {e}", fontsize=12, ha='center')
+        all_signals_df = pd.DataFrame(columns=['Symbol', 'Signal Type', 'Date', 'Price'])
+
 
     return {"chart_figure": fig, "signals_data": all_signals_df}
 
@@ -248,8 +252,15 @@ if st.button("Generate Analysis"):
 
 
     # Display the chart
-    if result["chart_figure"] is not None:
+    # if result["chart_figure"] is not None:
+    #     st.pyplot(result["chart_figure"])
+    if result["chart_figure"]:
         st.pyplot(result["chart_figure"])
+    else:
+        st.error("Failed to generate chart.")
+
+    #st.write(result["signals_data"])  # Display signals data
+
 
     # Display the drawdown chart
     if drawdown_fig is not None:
