@@ -97,6 +97,7 @@ def generate_stock_analysis(asset, start_date, end_date):
         # Plotting
         fig, (ax1, ax3) = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
 
+
         # Plot Close Price, SMA200, and Value Weighted Price on the same axis
         ax1.plot(data.index, data['Close'], label='Close Price', color='blue')
         ax1.plot(data.index, data['SMA200'], label='SMA200', color='lightblue')
@@ -181,6 +182,8 @@ def generate_stock_analysis(asset, start_date, end_date):
         # Convert the 'Date' column to the desired format
         all_signals_df['Date'] = pd.to_datetime(all_signals_df['Date']).dt.strftime('%Y-%M-%D')
 
+        plt.tight_layout() # just added 
+        plt.close(fig) # just added 
 
         
 
