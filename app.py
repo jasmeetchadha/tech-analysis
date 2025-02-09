@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
-st.title("Tech Analysis")
+st.title("Tech Analysis:")
 
 # User inputs
 ticker = st.text_input("Enter Ticker Symbol (e.g., AAPL)", "AAPL").upper()
