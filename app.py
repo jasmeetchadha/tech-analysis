@@ -9,6 +9,8 @@ st.title("Stock Analysis App")
 # User inputs
 ticker = st.text_input("Enter Ticker Symbol (e.g., AAPL)", "AAPL").upper()
 period = st.selectbox("Select Time Period", ("1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"), index=3)
+num_bins = st.slider("Number of Volume Profile Bins", 5, 50, 20)  # Number of bins
+volume_profile_width = st.slider("Volume Profile Width (%)", 1, 50, 20) # Volume width, as a percentage of chart width
 
 @st.cache_data
 def load_data(ticker, period):
@@ -23,16 +25,29 @@ def load_data(ticker, period):
 
 data = load_data(ticker, period)
 
-if data is not None:
+def calculate_volume_by_price(data, num_bins=20):
+    """Calculates volume by price for a given DataFrame. Returns a Pandas Series."""
+    min_price = data['Low'].min()
+    max_price = data['High'].max()
+    price_range = max_price - min_price
+    bin_size = price_range / num_bins
 
-    def plot_stock_with_all_signals(data, symbol):
+    volume_by_price = {}  # Use a dictionary to store (price_center, volume)
+    for i in range(num_bins):
+        lower_bound = min_price + i * bin_size
+        upper_bound = min_price + (i + 1) * bin_size
+        mask = (data['Close'] >= lower_bound) & (data['Close'] < upper_bound)  # Corrected mask
+        volume_by_price[(lower_bound + upper_bound) / 2] = data.loc[mask, 'Volume'].sum() # Correct Volume Sum
+
+    return pd.Series(volume_by_price)
+
+
+if data is not None:
+    volume_profile = calculate_volume_by_price(data, num_bins)
+
+    def plot_stock_with_all_signals(data, symbol, volume_profile=None):
         """
-        Takes pre-loaded stock data, calculates signals, and plots:
-        - Close price, SMA, VWAP, Volume Ratio (twinx)
-        - RSI (separate subplot), RSI divergences (highlighted on RSI chart ONLY)
-        - MACD (separate subplot), MACD signals (highlighted)
-        - Main signal (highlighted on price chart)
-        - Combined signal table (last 10 signals), with highlighting
+        Plots stock data with volume profile and other indicators.
         """
         try:
             if 'Close' not in data.columns:
@@ -129,14 +144,41 @@ if data is not None:
             ax1.set_ylabel('Price')
             ax1.set_title(f'{symbol} - Price, Indicators, and Signals')
             ax1.grid(True)
+
+            # Volume Profile (using twiny())
+            if volume_profile is not None:
+                ax1v = ax1.twiny()  # Create the twin axis
+                # Normalize the volume profile for consistent scaling
+                normalized_volume = volume_profile / volume_profile.max()
+                # Calculate the maximum x-position for the volume bars based on the price range
+                price_range = data['High'].max() - data['Low'].min()
+                max_volume_x = price_range * (volume_profile_width / 100)
+
+                # Plot the horizontal bars, using normalized_volume for the width
+                ax1v.barh(volume_profile.index, normalized_volume * max_volume_x,
+                         color='purple', alpha=0.3,
+                         height=(data['High'].max() - data['Low'].min()) / num_bins)
+
+                ax1v.set_xlim(0, max_volume_x)  # Set x-axis limits
+                ax1v.invert_xaxis()  # Invert the x-axis
+
+                ax1v.spines[['top', 'bottom', 'right']].set_visible(False) # remove borders
+                ax1v.tick_params(axis='x', colors='purple') # Set color for ticks
+
+                ax1v.set_xlabel("Volume", color='purple')  # Add x-axis label (optional)
+                ax1v.set_xticks([]) # Remove ticks from the x axis
+
+            # Volume Ratio as a secondary y-axis
             ax1_2 = ax1.twinx()
             ax1_2.plot(data.index, data['VolumeRatio'], label='30-day Volume Ratio', color='gray')
             ax1_2.set_ylabel('Volume Ratio', color='gray')
             ax1_2.tick_params(axis='y', labelcolor='gray')
             ax1_2.set_ylim(0, 1)
+
             lines1, labels1 = ax1.get_legend_handles_labels()
             lines1_2, labels1_2 = ax1_2.get_legend_handles_labels()
             ax1.legend(lines1 + lines1_2, labels1 + labels1_2, loc='upper left')
+
 
             # Highlight Main Signal (on price chart)
             for i, row in data.iterrows():
@@ -219,8 +261,8 @@ if data is not None:
         except Exception as e:
             st.error(f"Error processing {symbol}: {e}")
             return None
-    
-    processed_data = plot_stock_with_all_signals(data, ticker)
+
+    processed_data = plot_stock_with_all_signals(data, ticker, volume_profile)
 else:
     st.stop()
 
