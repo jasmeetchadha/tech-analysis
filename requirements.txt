@@ -4,4 +4,4 @@ yfinance
 matplotlib
 plotly
 pandas_ta
-numpy==1.23
+numpy
