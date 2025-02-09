@@ -2,7 +2,6 @@ import streamlit as st
 import yfinance as yf
 import matplotlib.pyplot as plt
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
 
 st.title("Stock Analysis App")
@@ -58,9 +57,29 @@ if data is not None:
                 st.warning(f"Error getting shares outstanding: {e}. Using volume mean.")
                 data['VolumeRatio'] = data['Volume'].rolling(window=30).mean()
 
-            data['RSI'] = ta.rsi(data['Close'], length=14)
-            macd = ta.macd(data['Close'], fast=20, slow=40, signal=20)
-            data = pd.concat([data, macd], axis=1)
+            # RSI Calculation (Replaces pandas_ta.rsi)
+            def rsi(close, length=14):
+                delta = close.diff()
+                up, down = delta.clip(lower=0), -1*delta.clip(upper=0)
+                roll_up1 = up.ewm(alpha=1/length).mean()
+                roll_down1 = down.ewm(alpha=1/length).mean()
+                RS = roll_up1 / roll_down1
+                RSI = 100.0 - (100.0 / (1.0 + RS))
+                return RSI
+
+            data['RSI'] = rsi(data['Close'], length=14)
+
+
+            # MACD Calculation (Replaces pandas_ta.macd)
+            def macd(close, fast=20, slow=40, signal=20):
+                EMAfast = close.ewm(span=fast, min_periods=fast).mean()
+                EMAslow = close.ewm(span=slow, min_periods=slow).mean()
+                MACD = EMAfast - EMAslow
+                MACD_signal = MACD.ewm(span=signal, min_periods=signal).mean()
+                MACD_histogram = MACD - MACD_signal
+                return MACD, MACD_signal, MACD_histogram
+
+            data['MACD_20_40_20'], data['MACDs_20_40_20'], data['MACDh_20_40_20'] = macd(data['Close'], fast=20, slow=40, signal=20)
 
             # RSI Divergence
             def calculate_rsi_divergence(close, rsi, lookback, price_thresh, rsi_thresh):
@@ -97,9 +116,8 @@ if data is not None:
             data['Signal'] = (data['Close'] < data['ValueWeightedPrice']) & (data['VolumeRatio'] > volume_ratio_threshold) & (data['RSI'] < 40)
             data['Signal'] = data['Signal'].astype(int)
 
-            # Use ffill and bfill instead of method
-            data.fillna(method='ffill', inplace=True)
-            data.fillna(method='bfill', inplace=True)
+            data.ffill(inplace=True)
+            data.bfill(inplace=True)
 
             # --- Plotting ---
             fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(14, 12), sharex=True, gridspec_kw={'height_ratios': [3, 1, 1]})
