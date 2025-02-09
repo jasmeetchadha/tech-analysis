@@ -3,4 +3,4 @@ riskfolio-lib
 yfinance
 matplotlib
 plotly
-numpy
+numpy==1.23
