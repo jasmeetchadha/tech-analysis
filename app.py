@@ -4,13 +4,13 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
-st.title("Stock Analysis App")
+st.title("Tech Analysis")
 
 # User inputs
 ticker = st.text_input("Enter Ticker Symbol (e.g., AAPL)", "AAPL").upper()
 period = st.selectbox("Select Time Period", ("1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"), index=3)
-num_bins = st.slider("Number of Volume Profile Bins", 5, 50, 20)
-volume_profile_width = 20 #st.slider("Volume Profile Width (%)", 1, 50, 20)
+num_bins = st.slider("Number of Volume Profile Bins", 5, 50, 40)
+volume_profile_width = 20 #st.slider("Volume Profile Width (%)", 1, 50, 20)  # in percent
 up_down_volume_days = st.slider("Up/Down Volume Days (x)", 10, 60, 30)
 
 @st.cache_data
@@ -28,7 +28,7 @@ data = load_data(ticker, period)
 def calculate_volume_by_price(data, num_bins=20):
     """Calculates volume by price. Returns a Pandas Series."""
     min_price = data['Low'].min()
-    max_price = data['High'].min()
+    max_price = data['High'].max()
     price_range = max_price - min_price
     bin_size = price_range / num_bins
     volume_by_price = {}
@@ -61,10 +61,10 @@ if data is not None:
                     data['VolumeRatio'] = data['Volume'].rolling(window=30).sum() / shares_outstanding
                 else:
                     st.warning(f"Shares outstanding not found for {symbol}. Using volume mean.")
-                    data['VolumeRatio'] = data['Volume'].rolling(window=30).mean()
+                    data['VolumeRatio'] = data['Volume'].rolling(window=30).mean()  # Fallback
             except Exception as e:
                 st.warning(f"Error getting shares outstanding: {e}. Using volume mean.")
-                data['VolumeRatio'] = data['Volume'].rolling(window=30).mean()
+                data['VolumeRatio'] = data['Volume'].rolling(window=30).mean() # Fallback
 
             # RSI
             def rsi(close, length=14):
@@ -121,7 +121,7 @@ if data is not None:
             data['Signal'] = (data['Close'] < data['ValueWeightedPrice']) & (data['VolumeRatio'] > volume_ratio_threshold) & (data['RSI'] < 40)
             data['Signal'] = data['Signal'].astype(int)
 
-            # Up/Down Volume Calculation - BEFORE plotting
+            # Up/Down Volume Calculation
             if shares_outstanding is not None:
                 data['VolumePercent'] = data['Volume'] / shares_outstanding
                 avg_volume_percent = data['VolumePercent'].mean()
@@ -137,7 +137,6 @@ if data is not None:
             data['UpDownVolume'] = np.where(data['PriceChange'] > 0, data['StdevVolume'], -data['StdevVolume'])
             data['UpDownVolume'] = data['UpDownVolume'].rolling(window=up_down_volume_days).mean()
 
-            # Create signal columns *before* the plotting loop, using 0.5 threshold
             data['PositiveUpDownVolumeSignal'] = (data['UpDownVolume'] > 0.5).astype(int)
             data['NegativeUpDownVolumeSignal'] = (data['UpDownVolume'] < -0.5).astype(int)
 
@@ -148,7 +147,7 @@ if data is not None:
             # --- Plotting ---
             fig, (ax1, ax_up_down, ax2, ax3) = plt.subplots(4, 1, figsize=(14, 16), sharex=True, gridspec_kw={'height_ratios': [3, 1, 1, 1]})
 
-            # Top plot (Price and Indicators)
+            # -- Top plot (Price, Indicators, and Volume Profile) --
             ax1.plot(data.index, data['Close'], label='Close Price', color='blue')
             ax1.plot(data.index, data['SMA200'], label='200-day SMA', color='red')
             ax1.plot(data.index, data['ValueWeightedPrice'], label='30-day VWAP', color='green')
@@ -156,46 +155,54 @@ if data is not None:
             ax1.set_title(f'{symbol} - Price, Indicators, and Signals')
             ax1.grid(True)
 
-            # Volume Profile (using twiny())
+            # -- Volume Profile (Corrected) --
             if volume_profile is not None:
-                ax1v = ax1.twiny()
+                ax1v = ax1.twiny()  # Create a twin axis that shares the y-axis
+                # Normalize the volume profile for consistent scaling
                 normalized_volume = volume_profile / volume_profile.max()
+                # Calculate the maximum x-position for the bars based on the price range *and user input*
                 price_range = data['High'].max() - data['Low'].min()
-                max_volume_x = price_range * (volume_profile_width / 100)
-                ax1v.barh(volume_profile.index, normalized_volume * max_volume_x,
-                         color='purple', alpha=0.3,
-                         height=(data['High'].max() - data['Low'].min()) / num_bins)
-                ax1v.set_xlim(0, max_volume_x)
-                ax1v.invert_xaxis()
-                ax1v.spines[['top', 'bottom', 'right']].set_visible(False)
-                ax1v.tick_params(axis='x', colors='purple')
-                ax1v.set_xlabel("Volume", color='purple')
-                ax1v.set_xticks([])
+                max_volume_x = price_range * (volume_profile_width / 100)  # Use user input
 
-            # Volume Ratio
-            ax1_2 = ax1.twinx()
+                # Correctly plot the horizontal bars on the twin axis
+                ax1v.barh(volume_profile.index, normalized_volume * max_volume_x, color='purple', alpha=0.3,
+                          height=(price_range / num_bins)*0.8)  # Consistent height
+
+                ax1v.set_xlim(0, max_volume_x) # set x limit
+                ax1v.invert_xaxis() # bars go left
+                ax1v.spines[['top', 'bottom', 'right']].set_visible(False) #remove extra axis lines
+                ax1v.tick_params(axis='x', colors='purple') # set tick color
+                ax1v.set_xlabel("Volume", color='purple')  # Optional x-axis label
+                ax1v.set_xticks([]) # remove xticks
+
+
+            # -- Volume Ratio --
+            ax1_2 = ax1.twinx()  # Create another twin axis for Volume Ratio
             ax1_2.plot(data.index, data['VolumeRatio'], label='30-day Volume Ratio', color='gray')
             ax1_2.set_ylabel('Volume Ratio', color='gray')
             ax1_2.tick_params(axis='y', labelcolor='gray')
-            ax1_2.set_ylim(0, 1)
+            ax1_2.set_ylim(0, 1)  # Volume ratio is typically between 0 and 1
+
+            # Combine legends from both ax1 and ax1_2
             lines1, labels1 = ax1.get_legend_handles_labels()
             lines1_2, labels1_2 = ax1_2.get_legend_handles_labels()
-            ax1.legend(lines1 + lines1_2, labels1 + labels1_2, loc='upper left')
+            ax1.legend(lines1 + lines1_2, labels1 + labels1_2, loc='upper left') # combined legend
+
 
             # Highlight Main Signal
             for i, row in data.iterrows():
                 if row['Signal'] == 1:
                     ax1.axvspan(i, i, color='green', alpha=0.3)
 
-            # Up/Down Volume Plot - Thresholds at +/- 0.5
+            # -- Up/Down Volume Plot --
             ax_up_down.plot(data.index, data['UpDownVolume'], label='Up/Down Volume', color='orange')
-            ax_up_down.axhline(0.5, color='green', linestyle='--', label='+0.5 Threshold')  # Changed to 0.5
-            ax_up_down.axhline(-0.5, color='red', linestyle='--', label='-0.5 Threshold') # Changed to -0.5
+            ax_up_down.axhline(0.5, color='green', linestyle='--', label='+0.5 Threshold')
+            ax_up_down.axhline(-0.5, color='red', linestyle='--', label='-0.5 Threshold')
             ax_up_down.set_ylabel('Up/Down Vol')
             ax_up_down.grid(True)
             ax_up_down.legend()
 
-            # Highlight Up/Down Volume Signals (Simplified)
+            # Highlight Up/Down Volume Signals
             for i, row in data.iterrows():
                 if row['PositiveUpDownVolumeSignal'] == 1:
                     ax_up_down.axvspan(i, i, color='green', alpha=0.3)
@@ -203,7 +210,7 @@ if data is not None:
                     ax_up_down.axvspan(i, i, color='red', alpha=0.3)
 
 
-            # RSI Plot
+            # -- RSI Plot --
             ax2.plot(data.index, data['RSI'], label='RSI', color='purple')
             ax2.set_ylabel('RSI')
             ax2.axhline(70, color='red', linestyle='--', label='Overbought (70)')
@@ -218,7 +225,7 @@ if data is not None:
                 if row['NegativeRSIDivergence']:
                     ax2.axvspan(i, i, color='red', alpha=0.3)
 
-            # MACD Plot
+            # -- MACD Plot --
             ax3.plot(data.index, data['MACD_20_40_20'], label='MACD', color='blue')
             ax3.plot(data.index, data['MACDs_20_40_20'], label='Signal Line', color='red')
             ax3.bar(data.index, data['MACDh_20_40_20'], label='Histogram', color='gray')
