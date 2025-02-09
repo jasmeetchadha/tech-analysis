@@ -9,7 +9,7 @@ st.title("Stock Analysis App")
 # User inputs
 ticker = st.text_input("Enter Ticker Symbol (e.g., AAPL)", "AAPL").upper()
 period = st.selectbox("Select Time Period", ("1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"), index=3)
-num_bins = st.slider("Number of Volume Profile Bins", 5, 50, 20)  # Number of bins
+num_bins = st.slider("Number of Volume Profile Bins", 5, 50, 40)  # Number of bins
 volume_profile_width = st.slider("Volume Profile Width (%)", 1, 50, 20) # Volume width, as a percentage of chart width
 
 @st.cache_data
