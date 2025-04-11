@@ -8,6 +8,8 @@ import datetime # Needed for drawdown potential date handling (though less criti
 
 # st.title("Tech Analysis:")
 
+# --- [Previous code for User inputs, load_data, calculate_volume_by_price remains the same] ---
+
 # User inputs
 ticker = st.text_input("Enter Ticker Symbol (e.g., AAPL)", "AAPL").upper()
 period = st.selectbox("Select Time Period", ("1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"), index=3)
@@ -31,13 +33,52 @@ def load_data(ticker, period):
             return None
         # Handle potential MultiIndex columns if multiple tickers were downloaded (though unlikely here)
         if isinstance(data.columns, pd.MultiIndex):
-            data = data[ticker]
-            # Or if the first level is the ticker: data.columns = data.columns.droplevel(0)
+            # Try accessing the ticker directly first
+            try:
+                data = data[ticker]
+            except KeyError:
+                # If direct access fails, try dropping the top level (assuming ticker is level 0)
+                if ticker in data.columns.levels[0]:
+                     data.columns = data.columns.droplevel(0)
+                else:
+                    # If ticker isn't in level 0, this might be more complex
+                    st.warning(f"Could not automatically flatten MultiIndex columns for {ticker}. Check data structure.")
+                    # Attempt a simple flatten, might rename columns unexpectedly
+                    data.columns = ['_'.join(col).strip() for col in data.columns.values]
+
         # Ensure columns are standard (sometimes yfinance returns lowercase)
         data.columns = [col.capitalize() for col in data.columns]
+
+        # --- Data Type Check ---
+        required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if not all(col in data.columns for col in required_cols):
+             missing = [col for col in required_cols if col not in data.columns]
+             st.error(f"Downloaded data is missing required columns: {', '.join(missing)}")
+             return None
+
+        # Convert essential columns to numeric, coercing errors
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            data[col] = pd.to_numeric(data[col], errors='coerce')
+
+        # Check if conversion resulted in all NaNs for critical columns
+        if data['Close'].isnull().all():
+             st.error("Close price data could not be converted to numeric or is all missing.")
+             return None
+        if data['Volume'].isnull().all():
+             st.warning("Volume data could not be converted to numeric or is all missing. Some indicators may fail.")
+             # Allow proceeding but indicators dependent on volume might be unreliable
+
+        # Optional: Drop rows where Close is NaN as they are unusable for most calcs
+        data.dropna(subset=['Close'], inplace=True)
+        if data.empty:
+            st.error("No valid rows remaining after handling missing Close prices.")
+            return None
+
         return data
     except Exception as e:
-        st.error(f"Error downloading data for {ticker}: {e}")
+        st.error(f"Error downloading or processing data for {ticker}: {e}")
+        import traceback
+        st.error(f"Traceback: {traceback.format_exc()}")
         return None
 
 
@@ -45,31 +86,53 @@ data = load_data(ticker, period)
 
 def calculate_volume_by_price(data, num_bins=20):
     """Calculates volume by price. Returns a Pandas Series."""
-    if data is None or 'Low' not in data.columns or 'High' not in data.columns or data[['Low', 'High']].isnull().values.any():
-        st.warning("Could not calculate volume profile due to missing price data.")
+    if data is None or 'Low' not in data.columns or 'High' not in data.columns or 'Close' not in data.columns or 'Volume' not in data.columns:
+        st.warning("Volume profile calculation requires Low, High, Close, and Volume columns.")
         return None
-    min_price = data['Low'].min()
-    max_price = data['High'].max()
+    # Drop rows with NaN in necessary columns for this calculation
+    calc_data = data[['Low', 'High', 'Close', 'Volume']].dropna()
+    if calc_data.empty:
+        st.warning("No valid data for volume profile calculation after dropping NaNs.")
+        return None
+
+    min_price = calc_data['Low'].min()
+    max_price = calc_data['High'].max()
+
     if pd.isna(min_price) or pd.isna(max_price) or min_price == max_price:
-        st.warning("Could not calculate volume profile due to invalid price range.")
+        st.warning("Could not calculate volume profile due to invalid price range (min/max are NaN or equal).")
         return None
     price_range = max_price - min_price
+    if price_range <= 0:
+        st.warning("Could not calculate volume profile due to non-positive price range.")
+        return None
+
     bin_size = price_range / num_bins
     if bin_size <= 0:
-         st.warning("Could not calculate volume profile due to zero bin size.")
+         st.warning("Could not calculate volume profile due to zero or negative bin size.")
          return None
 
     volume_by_price = {}
+    bin_edges = np.linspace(min_price, max_price, num_bins + 1)
+
     for i in range(num_bins):
-        lower_bound = min_price + i * bin_size
-        upper_bound = min_price + (i + 1) * bin_size
-        # Ensure we include the highest price in the last bin
-        if i == num_bins - 1:
-            mask = (data['Close'] >= lower_bound) & (data['Close'] <= upper_bound)
+        lower_bound = bin_edges[i]
+        upper_bound = bin_edges[i+1]
+        # Define midpoint for the bin label
+        mid_point = (lower_bound + upper_bound) / 2
+
+        # Create mask: include lower bound, exclude upper bound, except for the last bin
+        if i == num_bins - 1: # Last bin includes the max price
+             mask = (calc_data['Close'] >= lower_bound) & (calc_data['Close'] <= upper_bound)
         else:
-            mask = (data['Close'] >= lower_bound) & (data['Close'] < upper_bound)
-        volume_by_price[(lower_bound + upper_bound) / 2] = data.loc[mask, 'Volume'].sum()
-    return pd.Series(volume_by_price)
+             mask = (calc_data['Close'] >= lower_bound) & (calc_data['Close'] < upper_bound)
+
+        volume_by_price[mid_point] = calc_data.loc[mask, 'Volume'].sum()
+
+    if not volume_by_price: # Check if dictionary is empty
+         st.warning("No volume data matched the price bins for volume profile.")
+         return None
+
+    return pd.Series(volume_by_price).sort_index()
 
 
 if data is not None:
@@ -78,7 +141,17 @@ if data is not None:
     def plot_stock_with_all_signals(data, symbol, volume_profile=None):
         """Calculates indicators, plots charts (including drawdown), and shows signals."""
         try:
+            # --- INCREASE DEFAULT FONT SIZES ---
+            plt.rcParams.update({'font.size': 11, # Base font size
+                                 'axes.titlesize': 14, # Title for the main chart
+                                 'axes.labelsize': 11, # Axis labels
+                                 'xtick.labelsize': 10, # X-tick labels
+                                 'ytick.labelsize': 10, # Y-tick labels
+                                 'legend.fontsize': 10, # Legend text
+                                 'figure.titlesize': 16}) # Overall figure title (if used)
+
             # --- Data Validation ---
+            # (Keep the validation from the previous version)
             required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
             if not all(col in data.columns for col in required_cols):
                 st.error(f"Error: Missing one or more required columns ({', '.join(required_cols)}) in data for {symbol}.")
@@ -89,19 +162,37 @@ if data is not None:
 
             # Ensure Close is float, handling potential errors
             try:
-                data['Close'] = data['Close'].astype(float)
-                data['Volume'] = data['Volume'].astype(float) # Also ensure Volume is float
-            except ValueError as e:
-                 st.error(f"Error converting 'Close' or 'Volume' to numeric: {e}")
+                # Convert relevant columns to numeric, coercing errors to NaN
+                for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                     if col in data.columns:
+                         data[col] = pd.to_numeric(data[col], errors='coerce')
+            except Exception as e:
+                 st.error(f"Error converting columns to numeric: {e}")
                  return None
 
-            # Handle potential initial NaNs from rolling calculations
+            # Handle potential NaNs from conversion or earlier steps BEFORE calculations
+            data.dropna(subset=['Close'], inplace=True) # Essential for price-based calcs
+            if data.empty:
+                st.error("No data remains after removing rows with missing Close prices.")
+                return None
+
+            # Handle Volume NaNs (fill with 0? or mean? or keep NaN and handle in calcs?)
+            # Filling with 0 might be problematic for ratios/averages. Let's keep NaNs for now
+            # and handle them in specific calculations that use Volume.
+            # data['Volume'] = data['Volume'].fillna(0) # Alternative: fill with 0
+
             data = data.copy() # Avoid SettingWithCopyWarning
 
-
             # --- Calculations ---
-            data['SMA200'] = data['Close'].rolling(window=200, min_periods=1).mean() # Use min_periods
-            data['ValueWeightedPrice'] = (data['Close'] * data['Volume']).rolling(window=30, min_periods=1).sum() / data['Volume'].rolling(window=30, min_periods=1).sum()
+            # SMA200 - handle NaNs by using min_periods
+            data['SMA200'] = data['Close'].rolling(window=200, min_periods=1).mean()
+
+            # ValueWeightedPrice (VWAP-like) - handle NaNs in Close or Volume
+            close_vol = data['Close'] * data['Volume']
+            rolling_close_vol_sum = close_vol.rolling(window=30, min_periods=1).sum()
+            rolling_vol_sum_vwap = data['Volume'].rolling(window=30, min_periods=1).sum()
+            # Avoid division by zero or NaN/NaN
+            data['ValueWeightedPrice'] = rolling_close_vol_sum.divide(rolling_vol_sum_vwap).replace([np.inf, -np.inf], np.nan)
 
             # Volume Ratio
             shares_outstanding = None # Initialize
@@ -109,49 +200,58 @@ if data is not None:
                 ticker_info = yf.Ticker(symbol).info
                 shares_outstanding = ticker_info.get('sharesOutstanding')
                 if shares_outstanding is None or shares_outstanding == 0:
-                    st.warning(f"Shares outstanding not found or is zero for {symbol}. Using volume mean for ratio.")
+                    st.warning(f"Shares outstanding not found or is zero for {symbol}. Using relative volume mean for ratio.")
                     shares_outstanding = None # Force fallback
-                    data['VolumeRatio'] = data['Volume'].rolling(window=30, min_periods=1).mean() / data['Volume'].mean() # Relative mean
+                    # Calculate relative mean safely, handling potential NaNs and zero mean
+                    valid_volume = data['Volume'].dropna()
+                    if not valid_volume.empty and valid_volume.mean() != 0:
+                        data['VolumeRatio'] = data['Volume'].rolling(window=30, min_periods=1).mean() / valid_volume.mean()
+                    else:
+                        data['VolumeRatio'] = 0 # Assign 0 if mean volume is 0 or no valid volume
                 else:
                      # Calculate rolling sum of volume / shares outstanding
-                    rolling_vol_sum = data['Volume'].rolling(window=30, min_periods=1).sum()
-                    data['VolumeRatio'] = rolling_vol_sum / shares_outstanding
+                    rolling_vol_sum_ratio = data['Volume'].rolling(window=30, min_periods=1).sum()
+                    data['VolumeRatio'] = rolling_vol_sum_ratio / shares_outstanding
             except Exception as e:
                 st.warning(f"Error getting shares outstanding for {symbol}: {e}. Using relative volume mean.")
-                data['VolumeRatio'] = data['Volume'].rolling(window=30, min_periods=1).mean() / data['Volume'].mean() # Fallback
+                valid_volume = data['Volume'].dropna()
+                if not valid_volume.empty and valid_volume.mean() != 0:
+                     data['VolumeRatio'] = data['Volume'].rolling(window=30, min_periods=1).mean() / valid_volume.mean()
+                else:
+                     data['VolumeRatio'] = 0 # Fallback if error occurs too
+            # Ensure ratio isn't NaN if volume was NaN initially
+            data['VolumeRatio'] = data['VolumeRatio'].fillna(0)
+
 
             # --- Drawdown Calculation (Integrated) ---
             peak = data['Close'].cummax()
-            data['Drawdown'] = (data['Close'] - peak) / peak
-            # Replace potential division by zero (if peak is 0) or inf results with 0
-            data['Drawdown'].replace([np.inf, -np.inf], np.nan, inplace=True)
-            data['Drawdown'].fillna(0, inplace=True) # Fill any NaNs (e.g., from division by zero) with 0 drawdown
-
+            data['Drawdown'] = (data['Close'] - peak).divide(peak).replace([np.inf, -np.inf], np.nan).fillna(0)
 
             # RSI
             def rsi(close, length=14):
-                delta = close.diff()
+                close_series = pd.Series(close) # Ensure it's a series
+                delta = close_series.diff()
                 up = delta.clip(lower=0)
                 down = -1 * delta.clip(upper=0)
-                # Use Wilder's smoothing (equivalent to EMA with alpha = 1/length)
-                roll_up = up.ewm(alpha=1/length, adjust=False).mean()
-                roll_down = down.ewm(alpha=1/length, adjust=False).mean()
-
-                # Calculate RS and RSI
+                roll_up = up.ewm(alpha=1/length, adjust=False, min_periods=length).mean()
+                roll_down = down.ewm(alpha=1/length, adjust=False, min_periods=length).mean()
                 rs = roll_up / roll_down
-                rsi = 100.0 - (100.0 / (1.0 + rs))
-                 # Handle potential division by zero if roll_down is 0
-                rsi = rsi.replace([np.inf, -np.inf], 100).fillna(50) # Assign 100 if down=0 (strong uptrend), 50 if NaN
-                return rsi
+                rsi_calc = 100.0 - (100.0 / (1.0 + rs))
+                # Handle division by zero and NaN results more carefully
+                rsi_calc[roll_down == 0] = 100 # If downward change is zero, RSI is 100
+                rsi_calc[roll_up == 0] = 0     # If upward change is zero, RSI is 0 (less common case)
+                rsi_calc = rsi_calc.fillna(50) # Fill initial NaNs with 50
+                return rsi_calc
 
             data['RSI'] = rsi(data['Close'], length=14)
 
             # MACD
             def macd(close, fast=20, slow=40, signal=20):
-                ema_fast = close.ewm(span=fast, adjust=False).mean()
-                ema_slow = close.ewm(span=slow, adjust=False).mean()
+                close_series = pd.Series(close)
+                ema_fast = close_series.ewm(span=fast, adjust=False, min_periods=fast).mean()
+                ema_slow = close_series.ewm(span=slow, adjust=False, min_periods=slow).mean()
                 macd_line = ema_fast - ema_slow
-                signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+                signal_line = macd_line.ewm(span=signal, adjust=False, min_periods=signal).mean()
                 histogram = macd_line - signal_line
                 return macd_line, signal_line, histogram
 
@@ -161,14 +261,11 @@ if data is not None:
             def calculate_rsi_divergence(close, rsi, lookback, price_thresh, rsi_thresh):
                 pos_div = pd.Series(np.zeros(len(close), dtype=bool), index=close.index)
                 neg_div = pd.Series(np.zeros(len(close), dtype=bool), index=close.index)
-                # Ensure inputs are Series
                 close = pd.Series(close)
                 rsi = pd.Series(rsi)
                 for i in range(lookback, len(close)):
-                    # Skip if data is missing
                     if pd.isna(close.iloc[i]) or pd.isna(close.iloc[i - lookback]) or pd.isna(rsi.iloc[i]) or pd.isna(rsi.iloc[i - lookback]):
                         continue
-                    # Avoid division by zero
                     if close.iloc[i - lookback] == 0: continue
 
                     price_lower = close.iloc[i] < close.iloc[i - lookback]
@@ -176,13 +273,11 @@ if data is not None:
                     price_higher = close.iloc[i] > close.iloc[i - lookback]
                     rsi_lower = rsi.iloc[i] < rsi.iloc[i - lookback]
 
-                    # Calculate percentage/absolute changes
-                    price_change_pos = (close.iloc[i - lookback] - close.iloc[i]) / close.iloc[i - lookback] # Positive divergence: price fell
-                    price_change_neg = (close.iloc[i] - close.iloc[i-lookback]) / close.iloc[i - lookback] # Negative divergence: price rose
-                    rsi_change_pos = rsi.iloc[i] - rsi.iloc[i - lookback] # Positive divergence: RSI rose
-                    rsi_change_neg = rsi.iloc[i - lookback] - rsi.iloc[i] # Negative divergence: RSI fell
+                    price_change_pos = (close.iloc[i - lookback] - close.iloc[i]) / close.iloc[i - lookback]
+                    price_change_neg = (close.iloc[i] - close.iloc[i-lookback]) / close.iloc[i - lookback]
+                    rsi_change_pos = rsi.iloc[i] - rsi.iloc[i - lookback]
+                    rsi_change_neg = rsi.iloc[i - lookback] - rsi.iloc[i]
 
-                    # Check thresholds
                     if price_lower and rsi_higher and price_change_pos > price_thresh and rsi_change_pos > rsi_thresh:
                         pos_div.iloc[i] = True
                     if price_higher and rsi_lower and price_change_neg > price_thresh and rsi_change_neg > rsi_thresh:
@@ -197,16 +292,17 @@ if data is not None:
             data['NegativeMACDSignal'] = data['MACD_20_40_20'] >= (0.04 * data['Close'])
 
             # Main Signal
-            # Define threshold dynamically: mean + 1 std dev, but at least 0.005 (0.5%) if shares outstanding known, or relative if not
-            if shares_outstanding:
-                vol_ratio_mean = data['VolumeRatio'].mean()
-                vol_ratio_std = data['VolumeRatio'].std()
-                volume_ratio_threshold = max(0.005, vol_ratio_mean + vol_ratio_std) # At least 0.5% turnover
+            valid_volume_ratio = data['VolumeRatio'].dropna()
+            if not valid_volume_ratio.empty:
+                 vol_ratio_mean = valid_volume_ratio.mean()
+                 vol_ratio_std = valid_volume_ratio.std()
+                 # Define threshold based on whether it's absolute or relative ratio
+                 if shares_outstanding:
+                     volume_ratio_threshold = max(0.005, vol_ratio_mean + vol_ratio_std) # At least 0.5% turnover
+                 else:
+                     volume_ratio_threshold = vol_ratio_mean + vol_ratio_std # Relative threshold
             else:
-                # Use relative threshold if ratio is based on relative mean
-                vol_ratio_mean = data['VolumeRatio'].mean()
-                vol_ratio_std = data['VolumeRatio'].std()
-                volume_ratio_threshold = vol_ratio_mean + vol_ratio_std # Compare relative value to its own stats
+                volume_ratio_threshold = 0 # Default if no valid ratio data
 
             data['Signal'] = (data['Close'] < data['ValueWeightedPrice']) & (data['VolumeRatio'] > volume_ratio_threshold) & (data['RSI'] < 40)
             data['Signal'] = data['Signal'].astype(int)
@@ -214,24 +310,30 @@ if data is not None:
             # Up/Down Volume Calculation
             data['PriceChange'] = data['Close'].diff()
             # Calculate StdevVolume based on availability of shares outstanding
-            if shares_outstanding is not None and shares_outstanding > 0:
-                data['VolumePercent'] = data['Volume'] / shares_outstanding
-                avg_volume_percent = data['VolumePercent'].mean()
-                std_volume_percent = data['VolumePercent'].std()
-                # Avoid division by zero if std dev is 0
-                if std_volume_percent > 0:
-                     data['StdevVolume'] = (data['VolumePercent'] - avg_volume_percent) / std_volume_percent
+            valid_volume = data['Volume'].dropna() # Use only non-NaN volume for mean/std
+            if not valid_volume.empty:
+                avg_volume = valid_volume.mean()
+                std_volume = valid_volume.std()
+                if std_volume == 0: std_volume = 1 # Avoid division by zero if volume is constant
+
+                if shares_outstanding is not None and shares_outstanding > 0:
+                    data['VolumePercent'] = data['Volume'] / shares_outstanding
+                    valid_volume_percent = data['VolumePercent'].dropna()
+                    avg_volume_percent = valid_volume_percent.mean() if not valid_volume_percent.empty else 0
+                    std_volume_percent = valid_volume_percent.std() if not valid_volume_percent.empty else 0
+                    if std_volume_percent == 0: std_volume_percent = 1 # Avoid division by zero
+                    data['StdevVolume'] = (data['VolumePercent'] - avg_volume_percent) / std_volume_percent
                 else:
-                     data['StdevVolume'] = 0 # Or some other default if volume never changes
-            else:
-                avg_volume = data['Volume'].mean()
-                std_volume = data['Volume'].std()
-                if not shares_outstanding: # Only warn if we expected it but failed
-                     st.warning("Shares outstanding not found, using raw volume for Stdev Calc.")
-                if std_volume > 0:
+                    if not shares_outstanding:
+                         st.warning("Shares outstanding not found, using raw volume for Stdev Calc.", icon="⚠️")
                     data['StdevVolume'] = (data['Volume'] - avg_volume) / std_volume
-                else:
-                    data['StdevVolume'] = 0
+            else:
+                # Handle case where no valid volume data exists
+                data['StdevVolume'] = 0
+                st.warning("No valid volume data found for Stdev Volume calculation.", icon="⚠️")
+
+            # Fill NaNs in StdevVolume that might arise from NaNs in original Volume
+            data['StdevVolume'] = data['StdevVolume'].fillna(0)
 
             data['UpDownVolumeRaw'] = np.where(data['PriceChange'] > 0, data['StdevVolume'], np.where(data['PriceChange'] < 0, -data['StdevVolume'], 0))
             data['UpDownVolume'] = data['UpDownVolumeRaw'].rolling(window=up_down_volume_days, min_periods=1).mean()
@@ -239,160 +341,163 @@ if data is not None:
             data['PositiveUpDownVolumeSignal'] = (data['UpDownVolume'] > 0.5).astype(int)
             data['NegativeUpDownVolumeSignal'] = (data['UpDownVolume'] < -0.5).astype(int)
 
-            # Final fillna after all calculations
-            # Use ffill first then bfill to handle NaNs at the beginning
-            data.ffill(inplace=True)
-            data.bfill(inplace=True)
+            # Final fillna for indicators (mostly needed for the start of the series)
+            # Use forward fill first, then backward fill
+            cols_to_fill = ['SMA200', 'ValueWeightedPrice', 'VolumeRatio', 'Drawdown', 'RSI',
+                           'MACD_20_40_20', 'MACDs_20_40_20', 'MACDh_20_40_20', 'UpDownVolume']
+            for col in cols_to_fill:
+                if col in data.columns:
+                     data[col] = data[col].ffill().bfill()
 
 
             # --- Plotting ---
-            # INCREASE number of subplots to 5
             fig, (ax1, ax_drawdown, ax_up_down, ax2, ax3) = plt.subplots(
-                5, 1, figsize=(14, 20), sharex=True, # Increased height
-                gridspec_kw={'height_ratios': [4, 1, 1, 1, 1]} # Give more height to main price chart
+                5, 1, figsize=(14, 22), sharex=True, # Slightly taller figure
+                gridspec_kw={'height_ratios': [5, 1.5, 1.5, 1.5, 1.5]} # Adjusted ratios
             )
             plt.style.use('seaborn-v0_8-darkgrid') # Use a nice style
 
 
             # -- Panel 1: Price, Indicators, Volume Profile, Volume Ratio --
             ax1.plot(data.index, data['Close'], label='Close Price', color='blue', linewidth=1.5)
-            ax1.plot(data.index, data['SMA200'], label='SMA 200', color='red', linestyle='--', linewidth=1)
-            ax1.plot(data.index, data['ValueWeightedPrice'], label=f'VWAP {30}-day', color='green', linestyle=':', linewidth=1)
-            ax1.set_ylabel('Price ($)', color='blue')
-            ax1.tick_params(axis='y', labelcolor='blue')
-            ax1.set_title(f'{symbol} Technical Analysis ({data.index.min().strftime("%Y-%m-%d")} to {data.index.max().strftime("%Y-%m-%d")})', fontsize=14)
-            #ax1.grid(True) # Grid is handled by style
+            ax1.plot(data.index, data['SMA200'], label='SMA 200', color='red', linestyle='--', linewidth=1.2)
+            ax1.plot(data.index, data['ValueWeightedPrice'], label=f'VWAP {30}-day', color='green', linestyle=':', linewidth=1.2)
+            ax1.set_ylabel('Price ($)', color='blue', fontsize=12) # Increase label size
+            ax1.tick_params(axis='y', labelcolor='blue', labelsize=11) # Increase tick label size
+            ax1.set_title(f'{symbol} Technical Analysis ({data.index.min().strftime("%Y-%m-%d")} to {data.index.max().strftime("%Y-%m-%d")})') # Title size set by rcParams
 
-            # Highlight Main Signal
+            # Highlight Main Signal - **IMPROVED VISIBILITY**
             main_signal_dates = data.index[data['Signal'] == 1]
             if not main_signal_dates.empty:
-                # Use small markers instead of vspan for clarity if many signals
-                ax1.plot(main_signal_dates, data.loc[main_signal_dates, 'Close'], '^', color='lime', markersize=6, label='Main Signal')
-                # Add alpha transparency to avoid obscuring lines if using vspan:
-                #for date in main_signal_dates:
-                #    ax1.axvspan(date - pd.Timedelta(days=0.5), date + pd.Timedelta(days=0.5), color='green', alpha=0.2)
+                ax1.plot(main_signal_dates, data.loc[main_signal_dates, 'Close'],
+                         marker='o', # Filled Circle marker
+                         markersize=10, # Larger size
+                         color='yellow', # Bright yellow color
+                         markeredgecolor='black', # Black edge for contrast
+                         linestyle='None', # No connecting line
+                         label='Main Signal',
+                         zorder=5) # Plot on top
 
             # Volume Profile
             if volume_profile is not None and not volume_profile.empty:
                 ax1v = ax1.twiny()
                 normalized_volume = volume_profile / volume_profile.max()
-                # Determine width based on price range and percentage
-                price_min, price_max = ax1.get_ylim() # Get current y limits of price axis
+                price_min, price_max = ax1.get_ylim()
                 plot_width = (price_max - price_min) * (volume_profile_width / 100.0)
+                # Ensure bin height is reasonable, prevent division by zero if num_bins is 0 or price range is 0
+                bin_height = ((price_max - price_min) / num_bins * 0.8) if num_bins > 0 and price_max > price_min else 1
 
-                ax1v.barh(volume_profile.index, normalized_volume * plot_width, color='purple', alpha=0.3,
-                          height=(price_max - price_min) / num_bins * 0.8) # Adjust height based on bins
+                ax1v.barh(volume_profile.index, normalized_volume * plot_width, color='purple', alpha=0.35, # Slightly more opaque
+                          height=bin_height)
 
-                ax1v.set_xlim(plot_width, 0) # Invert x-axis to plot on the left
-                ax1v.set_xticks([]) # Hide volume profile x-ticks
-                ax1v.set_xlabel("Vol Profile", color='purple', alpha=0.7)
+                ax1v.set_xlim(plot_width, 0)
+                ax1v.set_xticks([])
+                ax1v.set_xlabel("Vol Profile", color='purple', alpha=0.8, fontsize=11) # Label size
                 ax1v.tick_params(axis='x', colors='purple')
-                ax1v.spines[['top', 'bottom', 'left','right']].set_visible(False) # Cleaner look
+                ax1v.spines[['top', 'bottom', 'left','right']].set_visible(False)
             else:
-                ax1.text(0.02, 0.95, "Volume Profile Unavailable", transform=ax1.transAxes, color='red', alpha=0.7, ha='left', va='top')
+                 ax1.text(0.02, 0.95, "Volume Profile Unavailable", transform=ax1.transAxes, color='red', alpha=0.7, ha='left', va='top', fontsize=10)
 
 
             # Volume Ratio
             ax1_2 = ax1.twinx()
-            ax1_2.plot(data.index, data['VolumeRatio'], label=f'Vol Ratio {30}-day', color='gray', linestyle='-', linewidth=1, alpha=0.7)
-            ax1_2.set_ylabel('Volume Ratio', color='gray', alpha=0.8)
-            ax1_2.tick_params(axis='y', labelcolor='gray', colors='gray')
-            ax1_2.spines['right'].set_color('gray') # Color the axis spine
-            # Set ylim based on ratio type for better scale
+            ax1_2.plot(data.index, data['VolumeRatio'], label=f'Vol Ratio {30}-day', color='dimgray', linestyle='-', linewidth=1.2, alpha=0.75) # Darker gray
+            ax1_2.set_ylabel('Volume Ratio', color='dimgray', alpha=0.9, fontsize=12) # Label size
+            ax1_2.tick_params(axis='y', labelcolor='dimgray', colors='dimgray', labelsize=11) # Tick label size
+            ax1_2.spines['right'].set_color('dimgray')
             if shares_outstanding:
-                ax1_2.set_ylim(bottom=0, top=max(0.1, data['VolumeRatio'].max() * 1.1)) # Sensible upper limit > 0
-                ax1_2.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0)) # Format as percentage if absolute ratio
+                ax1_2.set_ylim(bottom=0, top=max(0.05, data['VolumeRatio'].quantile(0.99) * 1.2)) # Adjusted ylim based on data quantile
+                ax1_2.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0))
             else:
-                 ax1_2.set_ylim(bottom=0) # Relative ratio, just start at 0
+                 ax1_2.set_ylim(bottom=0, top=max(0.1, data['VolumeRatio'].quantile(0.99) * 1.2)) # Relative scale limit
 
-            # Combine legends
+            # Combine legends - Increased font size via rcParams
             lines1, labels1 = ax1.get_legend_handles_labels()
             lines1_2, labels1_2 = ax1_2.get_legend_handles_labels()
-            ax1.legend(lines1 + lines1_2, labels1 + labels1_2, loc='upper left', fontsize=8)
+            ax1.legend(lines1 + lines1_2, labels1 + labels1_2, loc='upper left') # Font size set by rcParams
 
 
-            # -- Panel 2: Drawdown Plot (NEW) --
-            ax_drawdown.plot(data.index, data['Drawdown'], label='Drawdown', color='cornflowerblue', linewidth=1)
-            ax_drawdown.set_ylabel('Drawdown', color='cornflowerblue')
-            ax_drawdown.tick_params(axis='y', labelcolor='cornflowerblue')
-            ax_drawdown.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0)) # Format as percentage
-            ax_drawdown.grid(True, linestyle=':', alpha=0.6)
-            ax_drawdown.set_title('Price Drawdown from Peak', loc='left', fontsize=9, alpha=0.8)
-            # Optional: Annotate last drawdown point
+            # -- Panel 2: Drawdown Plot --
+            ax_drawdown.plot(data.index, data['Drawdown'], label='Drawdown', color='cornflowerblue', linewidth=1.2)
+            ax_drawdown.set_ylabel('Drawdown', color='cornflowerblue', fontsize=12) # Label size
+            ax_drawdown.tick_params(axis='y', labelcolor='cornflowerblue', labelsize=11) # Tick label size
+            ax_drawdown.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0))
+            ax_drawdown.grid(True, linestyle=':', alpha=0.7)
+            ax_drawdown.set_title('Price Drawdown from Peak', loc='left', fontsize=12, alpha=0.9) # Subplot title size
             last_drawdown_value = data['Drawdown'].iloc[-1]
             last_date = data.index[-1]
-            ax_drawdown.plot(last_date, last_drawdown_value, 'ro', markersize=4)
+            ax_drawdown.plot(last_date, last_drawdown_value, 'ro', markersize=5) # Keep annotation marker reasonable
             ax_drawdown.text(last_date, last_drawdown_value, f' {last_drawdown_value:.1%}',
-                              verticalalignment='center', horizontalalignment='left', fontsize=8, color='red')
+                              verticalalignment='center', horizontalalignment='left', fontsize=11, color='red') # Annotation text size
 
 
             # -- Panel 3: Up/Down Volume Plot --
-            ax_up_down.plot(data.index, data['UpDownVolume'], label=f'Up/Down Vol ({up_down_volume_days}d avg)', color='orange', linewidth=1)
-            ax_up_down.axhline(0.5, color='green', linestyle='--', linewidth=0.8, label='+0.5 Threshold')
-            ax_up_down.axhline(-0.5, color='red', linestyle='--', linewidth=0.8, label='-0.5 Threshold')
-            ax_up_down.axhline(0, color='black', linestyle='-', linewidth=0.5, alpha=0.5) # Zero line
-            ax_up_down.set_ylabel('Up/Down Vol', color='orange')
-            ax_up_down.tick_params(axis='y', labelcolor='orange')
-            ax_up_down.grid(True, linestyle=':', alpha=0.6)
-            ax_up_down.set_title('Up/Down Volume Momentum', loc='left', fontsize=9, alpha=0.8)
-            # Highlight Up/Down Volume Signals (Using markers for less clutter)
+            ax_up_down.plot(data.index, data['UpDownVolume'], label=f'Up/Down Vol ({up_down_volume_days}d avg)', color='darkorange', linewidth=1.2) # Darker orange
+            ax_up_down.axhline(0.5, color='green', linestyle='--', linewidth=1, label='+0.5 Threshold')
+            ax_up_down.axhline(-0.5, color='red', linestyle='--', linewidth=1, label='-0.5 Threshold')
+            ax_up_down.axhline(0, color='black', linestyle='-', linewidth=0.6, alpha=0.6)
+            ax_up_down.set_ylabel('Up/Down Vol', color='darkorange', fontsize=12) # Label size
+            ax_up_down.tick_params(axis='y', labelcolor='darkorange', labelsize=11) # Tick label size
+            ax_up_down.grid(True, linestyle=':', alpha=0.7)
+            ax_up_down.set_title('Up/Down Volume Momentum', loc='left', fontsize=12, alpha=0.9) # Subplot title size
             pos_udv_dates = data.index[data['PositiveUpDownVolumeSignal'] == 1]
             neg_udv_dates = data.index[data['NegativeUpDownVolumeSignal'] == 1]
             if not pos_udv_dates.empty:
-                ax_up_down.plot(pos_udv_dates, data.loc[pos_udv_dates, 'UpDownVolume'], 'go', markersize=4, alpha=0.7, label='Pos Signal')
+                ax_up_down.plot(pos_udv_dates, data.loc[pos_udv_dates, 'UpDownVolume'], 'go', markersize=6, alpha=0.8, label='Pos Signal') # Slightly larger signal markers
             if not neg_udv_dates.empty:
-                ax_up_down.plot(neg_udv_dates, data.loc[neg_udv_dates, 'UpDownVolume'], 'ro', markersize=4, alpha=0.7, label='Neg Signal')
-            ax_up_down.legend(fontsize=8, loc='upper left')
+                ax_up_down.plot(neg_udv_dates, data.loc[neg_udv_dates, 'UpDownVolume'], 'ro', markersize=6, alpha=0.8, label='Neg Signal')
+            ax_up_down.legend() # Font size from rcParams
 
 
             # -- Panel 4: RSI Plot --
-            ax2.plot(data.index, data['RSI'], label='RSI (14)', color='purple', linewidth=1)
-            ax2.axhline(70, color='red', linestyle='--', linewidth=0.8, label='Overbought (70)')
-            ax2.axhline(50, color='gray', linestyle=':', linewidth=0.8)
-            ax2.axhline(30, color='green', linestyle='--', linewidth=0.8, label='Oversold (30)')
-            ax2.set_ylabel('RSI', color='purple')
-            ax2.tick_params(axis='y', labelcolor='purple')
-            ax2.set_ylim(0, 100) # RSI range
-            ax2.grid(True, linestyle=':', alpha=0.6)
-            ax2.set_title('Relative Strength Index (RSI)', loc='left', fontsize=9, alpha=0.8)
-            # Highlight RSI Divergences (Using markers)
+            ax2.plot(data.index, data['RSI'], label='RSI (14)', color='purple', linewidth=1.2)
+            ax2.axhline(70, color='red', linestyle='--', linewidth=1, label='Overbought (70)')
+            ax2.axhline(50, color='gray', linestyle=':', linewidth=0.8, alpha=0.7)
+            ax2.axhline(30, color='green', linestyle='--', linewidth=1, label='Oversold (30)')
+            ax2.set_ylabel('RSI', color='purple', fontsize=12) # Label size
+            ax2.tick_params(axis='y', labelcolor='purple', labelsize=11) # Tick label size
+            ax2.set_ylim(0, 100)
+            ax2.grid(True, linestyle=':', alpha=0.7)
+            ax2.set_title('Relative Strength Index (RSI)', loc='left', fontsize=12, alpha=0.9) # Subplot title size
             pos_rsi_div_dates = data.index[data['PositiveRSIDivergence']]
             neg_rsi_div_dates = data.index[data['NegativeRSIDivergence']]
             if not pos_rsi_div_dates.empty:
-                ax2.plot(pos_rsi_div_dates, data.loc[pos_rsi_div_dates, 'RSI'], 'g^', markersize=5, alpha=0.8, label='Pos Div')
+                ax2.plot(pos_rsi_div_dates, data.loc[pos_rsi_div_dates, 'RSI'], 'g^', markersize=7, alpha=0.85, label='Pos Div') # Larger markers
             if not neg_rsi_div_dates.empty:
-                 ax2.plot(neg_rsi_div_dates, data.loc[neg_rsi_div_dates, 'RSI'], 'rv', markersize=5, alpha=0.8, label='Neg Div')
-            ax2.legend(fontsize=8, loc='upper left')
+                 ax2.plot(neg_rsi_div_dates, data.loc[neg_rsi_div_dates, 'RSI'], 'rv', markersize=7, alpha=0.85, label='Neg Div')
+            ax2.legend() # Font size from rcParams
 
 
             # -- Panel 5: MACD Plot --
-            ax3.plot(data.index, data['MACD_20_40_20'], label='MACD (20,40)', color='blue', linewidth=1)
-            ax3.plot(data.index, data['MACDs_20_40_20'], label='Signal (20)', color='red', linestyle=':', linewidth=1)
-            # Use step plot for histogram for better visualization
-            colors = ['green' if x >= 0 else 'red' for x in data['MACDh_20_40_20']]
-            ax3.bar(data.index, data['MACDh_20_40_20'], label='Histogram (20)', color=colors, width=1.0, alpha=0.5) # Adjust width as needed
-            ax3.axhline(0, color='black', linestyle='-', linewidth=0.5, alpha=0.5) # Zero line
-            ax3.set_xlabel('Date')
-            ax3.set_ylabel('MACD', color='blue')
-            ax3.tick_params(axis='y', labelcolor='blue')
-            ax3.grid(True, linestyle=':', alpha=0.6)
-            ax3.set_title('MACD (20, 40, 20)', loc='left', fontsize=9, alpha=0.8)
-            # Highlight MACD Signals (Using markers)
+            ax3.plot(data.index, data['MACD_20_40_20'], label='MACD (20,40)', color='blue', linewidth=1.2)
+            ax3.plot(data.index, data['MACDs_20_40_20'], label='Signal (20)', color='red', linestyle=':', linewidth=1.2)
+            colors = ['forestgreen' if x >= 0 else 'salmon' for x in data['MACDh_20_40_20']] # Adjusted colors
+            ax3.bar(data.index, data['MACDh_20_40_20'], label='Histogram (20)', color=colors, width=max(1.0, len(data.index) / 252 * 0.8), alpha=0.6) # Dynamic width based on data length
+            ax3.axhline(0, color='black', linestyle='-', linewidth=0.6, alpha=0.6)
+            ax3.set_xlabel('Date', fontsize=12) # Label size
+            ax3.set_ylabel('MACD', color='blue', fontsize=12) # Label size
+            ax3.tick_params(axis='y', labelcolor='blue', labelsize=11) # Tick label size
+            ax3.tick_params(axis='x', labelsize=11) # X Tick label size for bottom plot
+            ax3.grid(True, linestyle=':', alpha=0.7)
+            ax3.set_title('MACD (20, 40, 20)', loc='left', fontsize=12, alpha=0.9) # Subplot title size
             pos_macd_sig_dates = data.index[data['PositiveMACDSignal']]
             neg_macd_sig_dates = data.index[data['NegativeMACDSignal']]
             if not pos_macd_sig_dates.empty:
-                 ax3.plot(pos_macd_sig_dates, data.loc[pos_macd_sig_dates, 'MACD_20_40_20'], 'g^', markersize=5, alpha=0.8, label='Pos Signal')
+                 ax3.plot(pos_macd_sig_dates, data.loc[pos_macd_sig_dates, 'MACD_20_40_20'], 'g^', markersize=7, alpha=0.85, label='Pos Signal') # Larger markers
             if not neg_macd_sig_dates.empty:
-                 ax3.plot(neg_macd_sig_dates, data.loc[neg_macd_sig_dates, 'MACD_20_40_20'], 'rv', markersize=5, alpha=0.8, label='Neg Signal')
-            ax3.legend(fontsize=8, loc='upper left')
+                 ax3.plot(neg_macd_sig_dates, data.loc[neg_macd_sig_dates, 'MACD_20_40_20'], 'rv', markersize=7, alpha=0.85, label='Neg Signal')
+            ax3.legend() # Font size from rcParams
 
 
             # --- Final Plot Adjustments ---
-            plt.tight_layout(h_pad=1.5) # Add some vertical padding between plots
+            plt.tight_layout(h_pad=2.0) # Add more vertical padding
             st.pyplot(fig)
-            plt.close(fig) # Close the figure to free memory
+            plt.close(fig)
+            plt.rcdefaults() # Reset rcParams for subsequent plots if any (good practice)
+
 
             # --- Combined Signal Table ---
+            # (Keep the table generation logic the same)
             data['MainSignal'] = data['Signal'].astype(int) # Already calculated
             data['PositiveRSI'] = data['PositiveRSIDivergence'].astype(int)
             data['NegativeRSI'] = data['NegativeRSIDivergence'].astype(int)
@@ -422,11 +527,13 @@ if data is not None:
 
             if not signal_data.empty:
                 signal_data.reset_index(inplace=True) # Make Date a column
-                signal_data.rename(columns={'Date': 'Date', 'Close': 'Price'}, inplace=True)
+                signal_data.rename(columns={'index': 'Date', 'Close': 'Price'}, inplace=True) # Make sure rename uses correct original name ('index' often)
                 signal_data['Date'] = pd.to_datetime(signal_data['Date']).dt.strftime('%Y-%m-%d')
                 signal_data['Ticker'] = symbol
                 # Reorder columns for the table
                 display_order = ['Date', 'Ticker', 'Price', 'MainSignal', 'PositiveUpDownVolumeSignal', 'PositiveRSI', 'PositiveMACD', 'NegativeUpDownVolumeSignal', 'NegativeRSI', 'NegativeMACD']
+                # Ensure all columns exist before selecting
+                display_order = [col for col in display_order if col in signal_data.columns]
                 signal_data = signal_data[display_order]
                 signal_data = signal_data.sort_values(by='Date', ascending=False)
 
@@ -443,7 +550,12 @@ if data is not None:
             st.error(f"An error occurred during analysis or plotting for {symbol}: {e}")
             import traceback
             st.error(f"Traceback: {traceback.format_exc()}") # More detailed error for debugging
+            # Ensure rcParams are reset even if error occurs mid-plot
+            plt.rcdefaults()
             return None
+        finally:
+             # Reset Matplotlib settings after plotting is done or if an error occurs
+             plt.rcdefaults()
 
     # --- Run the Analysis and Plotting ---
     processed_data = plot_stock_with_all_signals(data, ticker, volume_profile)
@@ -451,6 +563,10 @@ if data is not None:
 else:
     st.warning("Data could not be loaded. Please check the ticker symbol and period.")
     st.stop()
+
+
+# --- [Optional Explanation Block remains the same] ---
+
 
 
 # Explanation Block (Optional - you can keep or remove this)
