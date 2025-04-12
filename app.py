@@ -147,7 +147,7 @@ if data is not None:
             valid_volume_ratio = data['VolumeRatio'].dropna()
             if not valid_volume_ratio.empty:
                 vol_ratio_mean=valid_volume_ratio.mean(); vol_ratio_std=valid_volume_ratio.std()
-                if shares_outstanding: volume_ratio_threshold = max(0.005, vol_ratio_mean + vol_ratio_std)
+                if shares_outstanding: volume_ratio_threshold = max(0.5, vol_ratio_mean + vol_ratio_std)
                 else: volume_ratio_threshold = vol_ratio_mean + vol_ratio_std
             else: volume_ratio_threshold = 0
             data['Signal'] = (data['Close']<data['ValueWeightedPrice']) & (data['VolumeRatio']>volume_ratio_threshold) & (data['RSI']<40)
