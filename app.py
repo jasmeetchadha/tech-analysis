@@ -248,7 +248,7 @@ if data is not None:
 
 
             # -- Panel 2: Drawdown Plot --
-            ax_drawdown.plot(data.index, data['Drawdown'], label='Drawdown', color='cornflowerblue', linewidth=1.2); ax_drawdown.set_ylabel('Drawdown', color='cornflowerblue'); ax_drawdown.tick_params(axis='y', labelcolor='cornflowerblue'); ax_drawdown.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0)); ax_drawdown.grid(True); ax_drawdown.set_title('Price Drawdown from Peak', loc='left', alpha=0.9); last_drawdown_value = data['Drawdown'].iloc[-1]; last_date = data.index[-1]; ax_drawdown.plot(last_date, last_drawdown_value, 'ro', markersize=5); ax_drawdown.text(last_date, last_drawdown_value, f' {last_drawdown_value:.1%}', verticalalignment='center', horizontalalignment='left', color='red', fontsize=12)
+            ax_drawdown.plot(data.index, data['Drawdown'], label='Drawdown', color='navy', linewidth=1.2); ax_drawdown.set_ylabel('Drawdown', color='navy'); ax_drawdown.tick_params(axis='y', labelcolor='navy'); ax_drawdown.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1.0)); ax_drawdown.grid(True); ax_drawdown.set_title('Price Drawdown from Peak', loc='left', alpha=0.9); last_drawdown_value = data['Drawdown'].iloc[-1]; last_date = data.index[-1]; ax_drawdown.plot(last_date, last_drawdown_value, 'ro', markersize=5); ax_drawdown.text(last_date, last_drawdown_value, f' {last_drawdown_value:.1%}', verticalalignment='center', horizontalalignment='left', color='red', fontsize=12)
 
 
             # -- Panel 3: Up/Down Volume Plot (CORRECTED - MARKERS) --
