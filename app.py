@@ -18,7 +18,8 @@ num_bins = st.slider("Number of Volume Profile Bins", 5, 50, 40)
 volume_profile_width = 20 #st.slider("Volume Profile Width (%)", 1, 50, 20)  # in percent
 up_down_volume_days = st.slider("Up/Down Volume Days (x)", 10, 60, 30)
 
-@st.cache_data
+#@st.cache_data
+@st.cache_data(ttl=datetime.timedelta(minutes=30))
 def load_data(ticker, period):
     # ... [load_data function content - ensure it's the full robust version] ...
     """Downloads stock data using yfinance."""
@@ -343,6 +344,10 @@ if data is not None:
 else:
     st.warning("Data could not be loaded. Please check the ticker symbol and period.")
     st.stop()
+
+
+
+
 
 # --- [Optional Explanation Block remains the same] ---
 
